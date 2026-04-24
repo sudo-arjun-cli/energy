@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env
+
+# i4b (external dependency)
+i4b/
+
+# ML/Simulation Outputs
+runs/
+logs/
+models/
+*.png
+*.json
+.DS_Store

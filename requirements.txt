@@ -1,0 +1,25 @@
+# ============================================
+# Heat Pump ML Controller — Dependencies
+# ============================================
+
+# --- Core RL & ML ---
+gymnasium>=0.29.0
+stable-baselines3>=2.3.0
+torch>=2.0.0
+
+# --- Scientific Computing ---
+numpy>=1.24.0
+pandas>=2.0.0
+scipy>=1.10.0
+
+# --- Data Sources ---
+requests>=2.31.0
+entsoe-py>=0.6.0
+
+# --- Visualization & Monitoring ---
+matplotlib>=3.7.0
+tensorboard>=2.14.0
+
+# --- i4b dependencies ---
+pvlib>=0.10.0
+casadi>=3.6.0
