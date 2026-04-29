@@ -3,7 +3,7 @@ Data Pipeline — Weather & Electricity Price Feeds for the Heat Pump Controller
 
 This module provides:
 1. BrightSky API integration for German weather data (free, no API key)
-2. ENTSO-E integration for German day-ahead electricity prices
+2. aWATTar API integration for electricity prices
 3. Synthetic data generators for offline training
 4. Grid signal loading from i4b's bundled data
 
@@ -123,36 +123,24 @@ class BrightSkyClient:
 
 
 # ============================================================================
-# 2. Electricity Prices — ENTSO-E Transparency Platform
+# 2. Electricity Prices — aWATTar API
 # ============================================================================
 
-class ENTSOEClient:
-    """Client for German day-ahead electricity prices.
+class AWattarClient:
+    """Client for electricity prices via aWATTar API.
 
-    Uses the entsoe-py library to fetch from ENTSO-E Transparency Platform.
-    Requires a free API key from: https://transparency.entsoe.eu/
-
-    If no API key is configured, falls back to synthetic price generation.
+    Fetches electricity market data from aWATTar.
+    No API key is required.
+    
+    If request fails, falls back to synthetic price generation.
     """
 
-    def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key or PRICE_CONFIG["entsoe_api_key"]
-        self._client = None
-
-        if self.api_key:
-            try:
-                from entsoe import EntsoePandasClient
-                self._client = EntsoePandasClient(api_key=self.api_key)
-            except ImportError:
-                warnings.warn(
-                    "entsoe-py not installed. Install with: pip install entsoe-py"
-                )
+    BASE_URL = "https://api.awattar.at/v1/marketdata"
 
     def fetch_day_ahead_prices(
         self,
         start: str,
         end: str,
-        bidding_zone: str = None,
     ) -> pd.DataFrame:
         """Fetch day-ahead electricity prices.
 
@@ -162,8 +150,6 @@ class ENTSOEClient:
             Start date in YYYY-MM-DD format.
         end : str
             End date in YYYY-MM-DD format.
-        bidding_zone : str
-            ENTSO-E bidding zone (default: DE_LU for Germany).
 
         Returns
         -------
@@ -174,21 +160,41 @@ class ENTSOEClient:
             - price_rank: Rank within day (0=cheapest, 23=most expensive)
             - is_cheap_hour: True if below daily median
         """
-        zone = bidding_zone or PRICE_CONFIG["bidding_zone"]
-
-        if self._client is None:
-            warnings.warn("No ENTSO-E API key. Using synthetic prices.")
-            return self.generate_synthetic_prices(start, end)
-
         try:
             start_ts = pd.Timestamp(start, tz="Europe/Berlin")
-            end_ts = pd.Timestamp(end, tz="Europe/Berlin")
-
-            prices = self._client.query_day_ahead_prices(
-                zone, start=start_ts, end=end_ts
+            end_ts = pd.Timestamp(end, tz="Europe/Berlin") + pd.Timedelta(days=1)
+            
+            # aWATTar expects timestamps in milliseconds
+            params = {
+                "start": int(start_ts.timestamp() * 1000),
+                "end": int(end_ts.timestamp() * 1000)
+            }
+            
+            response = requests.get(
+                self.BASE_URL,
+                params=params,
+                timeout=30,
             )
+            response.raise_for_status()
+            data = response.json()
+            
+            if not data.get("data"):
+                warnings.warn(f"No price data returned from aWATTar. Using synthetic prices.")
+                return self.generate_synthetic_prices(start, end)
+                
+            records = []
+            for entry in data["data"]:
+                records.append({
+                    "timestamp": pd.Timestamp(entry["start_timestamp"], unit="ms", tz="UTC").tz_convert("Europe/Berlin"),
+                    "price_eur_mwh": entry["marketprice"]
+                })
+                
+            df = pd.DataFrame(records)
+            df = df.set_index("timestamp")
+            
+            # Ensure index frequency is hourly
+            df = df.resample('h').mean().ffill()
 
-            df = pd.DataFrame({"price_eur_mwh": prices})
             df["price_eur_kwh"] = df["price_eur_mwh"] / 1000
             df["price_rank"] = df.groupby(df.index.date)["price_eur_mwh"].rank()
             df["is_cheap_hour"] = df.groupby(df.index.date)[
@@ -197,7 +203,7 @@ class ENTSOEClient:
             return df
 
         except Exception as e:
-            warnings.warn(f"ENTSO-E query failed: {e}. Using synthetic prices.")
+            warnings.warn(f"aWATTar query failed: {e}. Using synthetic prices.")
             return self.generate_synthetic_prices(start, end)
 
     @staticmethod
@@ -389,10 +395,9 @@ class DataPipeline:
         self,
         lat: float = None,
         lon: float = None,
-        entsoe_api_key: str = None,
     ):
         self.weather_client = BrightSkyClient(lat=lat, lon=lon)
-        self.price_client = ENTSOEClient(api_key=entsoe_api_key)
+        self.price_client = AWattarClient()
 
     def get_training_data(
         self,
@@ -415,7 +420,7 @@ class DataPipeline:
         """
         if use_synthetic:
             weather = generate_synthetic_weather(start, end)
-            prices = ENTSOEClient.generate_synthetic_prices(start, end)
+            prices = AWattarClient.generate_synthetic_prices(start, end)
         else:
             weather = self.weather_client.fetch_weather(start, end)
             prices = self.price_client.fetch_day_ahead_prices(start, end)
