@@ -75,7 +75,7 @@ class HeatPumpSimulation:
             "T_room": [], "T_tank": [], "T_amb": [],
             "supply_temp": [], "Q_HP_w": [], "Q_house_w": [],
             "Q_el_w": [], "price_eur_kwh": [], "valve_pos": [],
-            "reward": [], "cost_eur": [], "cop": [],
+            "cost_eur": [], "cop": [],
             "T_tank_ref": [], "T_room_ref": [],
         }
 
